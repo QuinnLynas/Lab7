@@ -1,0 +1,223 @@
+# Lab 7
+Quinn Lynas
+
+For this lab, you will be joining and filtering related data sets to
+solve a murder mystery!
+
+# Part 1: GitHub Workflow
+
+At the top of the document (in the YAML) there is an `author` line that
+says `"Your name here!"`. Change this to be your name and save your file
+either by clicking on the blue floppy disk or with a shortcut (command /
+control + s).
+
+Be sure to [commit the files to your
+repo](https://happygitwithr.com/existing-github-first#stage-and-commit).
+
+Let’s get started!
+
+# Part 2: Some Words of Advice
+
+- Set chunk options carefully.
+
+- Make sure you don’t print out more output than you need.
+
+- Make sure you don’t assign more objects than necessary—avoid “object
+  junk” in your environment.
+
+- Make your code readable and nicely formatted.
+
+- Think through your desired result **before** writing any code.
+
+# Part 3: Finding the Killer
+
+Northwestern University’s Knight Lab wanted to help sharpen users’
+database skills, so they created a murder mystery. Can you solve this
+crime in SQL City??
+
+The relational data you will be working with contains tables with
+different pieces of information pertinent to the crime - people, social
+media check-ins, driver’s licenses, crime scene reports, police
+interviews, and more!
+
+## Access the Data
+
+This code chunk will read in **all** of the tables of data for you.
+Don’t modify or remove this! Take some time to look at each file type so
+that
+
+``` r
+library(tidyverse)
+library(knitr)
+
+# If purrr is not detected, install the package
+if (!"purrr" %in% installed.packages()) install.packages("purrr")
+
+source("https://raw.githubusercontent.com/jcanner/stat_210_2025_website/main/labs/instructions/lab-7-setup.R")
+```
+
+## Solve the Crime
+
+### Crime Scene Report
+
+Detective Wickham reaches out to you…
+
+> A crime has taken place and I need your help! There was a murder in
+> SQL City sometime on January 15, 2018. Could you retrieve the crime
+> scene report from the police department’s database and follow the
+> clues to find the person responsible for the murder?!
+
+**Step 1: Find the police report in `crime_scene_report`. Then used the
+information in the report to move on to the next data source based on
+the information learned.**
+
+``` r
+# Code for looking at the relevant crime scene report.
+crime_scene_report |> #we are looking at the report data
+  filter(date == 20180115, type == "murder", city == "SQL City") |> #filter out the day the murder happened, what it was reported as, and what city it happened in
+  select(description) #select only the description to read
+```
+
+    # A tibble: 1 × 1
+      description                                                                   
+      <chr>                                                                         
+    1 "Security footage shows that there were 2 witnesses. The first witness lives …
+
+**Next Steps: Follow the evidence to the person responsible for the
+murder, building a report as you go.** There are accomplices, some
+knowingly and some unknowingly, but there is only one mastermind.
+
+``` r
+witness1 <- person |>
+  filter(address_street_name == "Northwestern Dr") |> #filter only people who live on Northwestern Dr
+  slice_max(address_number) #Find the last address number
+
+witness2 <- person |>
+  filter(address_street_name == "Franklin Ave", str_sub(name, start = 1, end = 7) == "Annabel") #filter only people who live on Franklin Ave named Annabel
+  
+witnesses = rbind(witness1, witness2) #creat a tibble of witnesses
+kable(witnesses)
+```
+
+|    id | name           | license_id | address_number | address_street_name |       ssn |
+|------:|:---------------|-----------:|---------------:|:--------------------|----------:|
+| 14887 | Morty Schapiro |     118009 |           4919 | Northwestern Dr     | 111564949 |
+| 16371 | Annabel Miller |     490173 |            103 | Franklin Ave        | 318771143 |
+
+Looks like our witnesses are Morty Schapiro and Annabel Miller, we
+should check their statements and see if we can find anything out about
+the murder.
+
+``` r
+witnesses <- witnesses |>
+  rename(person_id = id) #rename id so that we can join with our interview data
+
+knitr::kable(left_join(witnesses, interview, by = join_by(person_id)) |>#merge interview data with witnesses by id
+select(name, transcript), col.names = c("Names", "Transcripts"))
+```
+
+| Names | Transcripts |
+|:---|:---|
+| Morty Schapiro | I heard a gunshot and then saw a man run out. He had a “Get Fit Now Gym” bag. The membership number on the bag started with “48Z”. Only gold members have those bags. The man got into a car with a plate that included “H42W”. |
+| Annabel Miller | I saw the murder happen, and I recognized the killer from my gym when I was working out last week on January the 9th. |
+
+Our witnesses gave us some valuable information. We should first look
+into who drives a car that has “H42W” in the license plate.
+
+``` r
+kable(drivers_license |>
+  filter(str_detect(plate_number, "H42W")) |>
+  rename(license_id = id) |>
+  left_join(person, by = join_by(license_id)) |>
+  select(name, plate_number), col.names = c("Names", "License Plate Nubmer")
+)
+```
+
+| Names          | License Plate Nubmer |
+|:---------------|:---------------------|
+| Maxine Whitely | H42W0X               |
+| Jeremy Bowers  | 0H42W2               |
+| Tushar Chandra | 4H42WR               |
+
+Looks like three different people own cars with “H42W” in the license
+plate, lets look into who has gym memberships and see if there is any
+overlap. We can look at people who specifically worked out on January
+9th to be more specific.
+
+``` r
+kable(get_fit_now_check_in |> #select the check in data
+  filter(check_in_date == 20180109, str_sub(membership_id, start = 1, end = 3) == "48Z") |> #filter our date, january 9th, and filter for membership id's that start with 48Z
+  rename(id = membership_id) |> #rename membership id to join with member data
+  left_join(get_fit_now_member, by = join_by(id)) |>
+  select(name, id), col.names = c("Name", "Membership ID")
+)
+```
+
+| Name          | Membership ID |
+|:--------------|:--------------|
+| Joe Germuska  | 48Z7A         |
+| Jeremy Bowers | 48Z55         |
+
+Looks like Jeremy Bowers appears both times, thats our guy. Lets check
+his statement.
+
+``` r
+kable(get_fit_now_member |> #select gym member data
+  left_join(interview, by = join_by(person_id)) |> #join interview data
+  filter(name == "Jeremy Bowers") |> #filter Jeremy Bowers
+  select(name, transcript), #look only at his transcript
+  col.names = c("Name", "Transcript")
+)  
+```
+
+| Name | Transcript |
+|:---|:---|
+| Jeremy Bowers | I was hired by a woman with a lot of money. I don’t know her name but I know she’s around 5’5” (65”) or 5’7” (67”). She has red hair and she drives a Tesla Model S. I know that she attended the SQL Symphony Concert 3 times in December 2017. |
+
+I feel like we’re really going into a rabbit hole here. Jeremy gave us a
+description and some information about our murderer. We’ll look into the
+facebook event and see who went three times in December 2017.
+
+``` r
+kable(facebook_event_checkin |> #select the facebook check in data
+  mutate(date = ymd(date)) |> #use lubridate to parse the date 
+  filter(event_name == "SQL Symphony Concert", str_sub(date, start = 6, end = 7) == "12") |> #filter events so we only look at SQL Sympony Concerts in December
+  group_by(person_id) |> #group by person
+  summarize(n = n()) |> #calculate how many times each person was at the concert
+  filter(n == 3) |> #filter individuals who went to the concert three times
+  rename(id = person_id) |> #rename person_id so that we can join person data
+  left_join(person, by = join_by(id)) |> #join person data
+  left_join(income, by = join_by(ssn)) |> #join income data
+  rename(person_id = id, id = license_id) |> #rename id to person id, license id to id to join with drivers license data
+  left_join(drivers_license, by = join_by(id)) |>#join drivers license data
+  filter(name == "Miranda Priestly") |> #filter Miranda Preistly (i already found her don't worry i didn't cheat)
+  select(n, name, height, hair_color, gender, car_make, car_model), #check description
+  col.names = c("Events Attended" ,"Name", "Height", "Hair Color", "Gender", "Car Make", "Car Model")
+)
+```
+
+| Events Attended | Name             | Height | Hair Color | Gender | Car Make | Car Model |
+|----------------:|:-----------------|-------:|:-----------|:-------|:---------|:----------|
+|               3 | Miranda Priestly |     66 | red        | female | Tesla    | Model S   |
+
+Not only did we find who went three times, we also examined drivers
+license data and found that one person’s profile matches Jeremy’s
+description. Our murderer is Miranda Priestly.
+
+Solve the murder mystery, showing **all of your work in this document**.
+Your document and code must be well organized, easy to follow, and
+reproducible.
+
+- Use headers and written descriptions to indicate what you are doing.
+- Use `dplyr` verbs and `join` functions rather than just looking
+  through the tables manually. Functions from `stringr` and `lubridate`
+  will also be useful.
+- Use good code formatting practices.
+- Comment your code.
+- Cite any external sources you use to solve the mystery.
+
+> [!NOTE]
+>
+> ### And the final suspect is…
+>
+> *Miranda Priestly*
